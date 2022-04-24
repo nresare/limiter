@@ -11,12 +11,12 @@ import java.time.Duration;
 public class WebServer {
 
     public static final int LISTEN_PORT = 8080;
-    public static final Duration INITIAL_DELAY = Duration.ofMillis(200);
+    public static final Duration MINIMAL_GAP = Duration.ofMillis(200);
     public static final String TARGET_BASE = "http://localhost:8081";
 
     public static void main(String[] args) throws Exception {
         var upstream = new UpstreamService();
-        var limiter = new Limiter<>(r -> r.uri().getPath(), upstream, INITIAL_DELAY);
+        var limiter = new Limiter<>(r -> r.uri().getPath(), upstream, MINIMAL_GAP);
         startAndServe(limiter);
     }
 

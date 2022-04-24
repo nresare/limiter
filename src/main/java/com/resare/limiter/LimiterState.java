@@ -3,9 +3,9 @@ package com.resare.limiter;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedDeque;
 
-public class LimiterState<Req> {
+public class LimiterState {
     private long lastSent;
-    private final Queue<Req> queue;
+    private final Queue<Runnable> queue;
 
     public LimiterState() {
         this.lastSent = System.currentTimeMillis();
@@ -16,7 +16,7 @@ public class LimiterState<Req> {
         return lastSent;
     }
 
-    public Queue<Req> getQueue() {
+    public Queue<Runnable> getQueue() {
         return queue;
     }
 

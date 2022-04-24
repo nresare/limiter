@@ -17,34 +17,33 @@ public class Limiter<Req, Resp, Key> implements Service<Req, Resp> {
     private static final Logger LOG = LoggerFactory.getLogger(Limiter.class);
     private final Function<Req, Key> keyMaker;
     private final Service<Req, Resp> backingService;
-    private volatile Duration gapMinimum;
+    private volatile Duration minimalGap;
     // Haven't looked into what is a good value for corePoolSize, just guessing for now.
     private final ScheduledExecutorService executorService = new ScheduledThreadPoolExecutor(4);
-    private final ConcurrentMap<Key, LimiterState<Runnable>> queues = new ConcurrentHashMap<>();
+    private final ConcurrentMap<Key, LimiterState> states = new ConcurrentHashMap<>();
 
     public Limiter(Function<Req, Key> keyMaker, Service<Req, Resp> backingService, Duration minimalGap) {
         this.keyMaker = keyMaker;
         this.backingService = backingService;
-        this.gapMinimum = minimalGap;
+        this.minimalGap = minimalGap;
     }
 
-    synchronized public CompletableFuture<Resp> request(Req request) {
+    public CompletableFuture<Resp> request(Req request) {
         var key = keyMaker.apply(request);
 
-        var lastSentAndQueue = queues.get(key);
-        if (lastSentAndQueue == null) {
+        var prevState = states.putIfAbsent(key, new LimiterState());
+        if (prevState == null) {
             LOG.info("Handling fast path request for {}", key);
-            queues.put(key, new LimiterState<>());
             return backingService.request(request);
         }
-        return slowPath(lastSentAndQueue, request, key);
+        return slowPath(prevState, request, key);
     }
 
-    public void setGapMinimum(Duration gapMinimum) {
-        this.gapMinimum = gapMinimum;
+    public void setMinimalGap(Duration minimalGap) {
+        this.minimalGap = minimalGap;
     }
 
-    private CompletableFuture<Resp> slowPath(LimiterState<Runnable> limiterState, Req request, Key key) {
+    private CompletableFuture<Resp> slowPath(LimiterState limiterState, Req request, Key key) {
         LOG.info("Handling slow path request for {}", key);
         var delay = msDelay(limiterState);
         if (delay < 0) {
@@ -55,7 +54,7 @@ public class Limiter<Req, Resp, Key> implements Service<Req, Resp> {
 
         var future = new CompletableFuture<Resp>();
         var queue = limiterState.getQueue();
-        queue.add(() -> {completeOther(backingService.request(request), future);});
+        queue.add(() -> completeOther(backingService.request(request), future));
         if (queue.size() < 2) {
             scheduleProcessQueue(key);
         }
@@ -64,15 +63,16 @@ public class Limiter<Req, Resp, Key> implements Service<Req, Resp> {
 
 
     private void scheduleProcessQueue(Key key) {
-        var lastSentAndQueue = queues.get(key);
-        var delay = msDelay(lastSentAndQueue);
+        var state = states.get(key);
+        var delay = msDelay(state);
         LOG.debug("Calculating delay to {} ms", delay);
         executorService.schedule(() -> {
             LOG.info("Processing queue");
-            var queue = lastSentAndQueue.getQueue();
-            if (!queue.isEmpty()) {
-                lastSentAndQueue.updateLastSent();
-                queue.remove().run();
+            var queue = state.getQueue();
+            var runnable = queue.poll();
+            if (runnable != null) {
+                state.updateLastSent();
+                runnable.run();
             }
             if (!queue.isEmpty()) {
                 scheduleProcessQueue(key);
@@ -85,19 +85,19 @@ public class Limiter<Req, Resp, Key> implements Service<Req, Resp> {
 
     private void scheduleRemoveQueue(Key key, long delay) {
         executorService.schedule(() -> {
-            var innerDelay = msDelay(queues.get(key));
+            var innerDelay = msDelay(states.get(key));
             if (innerDelay > 0) {
                 scheduleRemoveQueue(key, innerDelay);
             } else {
                 LOG.info("removing queue for key {}", key);
-                queues.remove(key);
+                states.remove(key);
             }
         }, delay, TimeUnit.MILLISECONDS);
     }
 
 
-    private long msDelay(LimiterState<Runnable> limiterState) {
-        return limiterState.getLastSent() + gapMinimum.toMillis() - System.currentTimeMillis();
+    private long msDelay(LimiterState limiterState) {
+        return limiterState.getLastSent() + minimalGap.toMillis() - System.currentTimeMillis();
     }
 
     private <T>void completeOther(CompletableFuture<T> future, CompletableFuture<T> other) {

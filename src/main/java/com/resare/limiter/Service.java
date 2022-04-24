@@ -1,6 +1,5 @@
 package com.resare.limiter;
 
-import java.net.http.HttpResponse;
 import java.util.concurrent.CompletableFuture;
 
 @FunctionalInterface

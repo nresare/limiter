@@ -14,7 +14,6 @@ class ProxyHandlerTest {
                 URI.create("http://localhost:8081/foo"),
                 buildTargetURI("http://localhost:8080/foo", URI.create("http://localhost:8081"))
         );
-
     }
 
 }
