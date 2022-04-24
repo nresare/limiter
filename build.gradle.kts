@@ -1,5 +1,6 @@
 plugins {
-    id("java")
+    java
+    application
 }
 
 group = "com.resare"
@@ -20,4 +21,8 @@ dependencies {
 
 tasks.getByName<Test>("test") {
     useJUnitPlatform()
+}
+
+application {
+    mainClass.set("com.resare.limiter.WebServer")
 }

@@ -22,14 +22,18 @@ public class ProxyHandler extends AbstractHandler {
         this.baseURI = URI.create(baseURI);
     }
 
-
     @Override
     public void handle(
             String target,
             Request baseRequest,
             HttpServletRequest request,
             HttpServletResponse response
-    ) {
+    ) throws IOException {
+        if (!"GET".equals(request.getMethod())) {
+            response.sendError(500, "For now, we only support the GET method");
+            return;
+        }
+
         var ctx = request.startAsync();
 
         var upstreamRequest = HttpRequest.newBuilder()

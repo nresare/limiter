@@ -3,11 +3,11 @@ package com.resare.limiter;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedDeque;
 
-public class LastSentAndQueue<Req> {
+public class LimiterState<Req> {
     private long lastSent;
     private final Queue<Req> queue;
 
-    public LastSentAndQueue() {
+    public LimiterState() {
         this.lastSent = System.currentTimeMillis();
         this.queue = new ConcurrentLinkedDeque<>();
     }
@@ -16,11 +16,11 @@ public class LastSentAndQueue<Req> {
         return lastSent;
     }
 
-    public void setLastSent(long lastSent) {
-        this.lastSent = lastSent;
-    }
-
     public Queue<Req> getQueue() {
         return queue;
+    }
+
+    public void updateLastSent() {
+        lastSent = System.currentTimeMillis();
     }
 }
