@@ -18,28 +18,31 @@ Steps to test:
 5. configure the MINIMAL_GAP with a request such as this one `curl http://localhost:8080/limit/4000`
    to set minimal gap to 4 seconds.
 6. verify that with two subsequent requests to the same path, such as `curl http://localhost:8080/foo`
-   the first request is fast and the second is delayed. For two different paths such as `/foo` and `/bar`
-   both are fast.
+   the first request is fast and the second is delayed. For two different paths such as `/foo` and 
+   `/bar` both are fast.
 
 ## Implementation notes
 
 The Limiter class is a generic rate limiter for request/response style asynchronous services using
 `CompletableFuture`. This seemed useful to be able to unit test the algorithm without needing to
-bother with http specific things.
+bother with http specific things. The limiter can then be used to wrap arbitrary other 
+implementations of `Service`. The ProxyHandler is a jetty Handler implementation that passes its
+requests onto a Service implementation that asynchronously returns a `HttpResponse` given a 
+`HttpRequest`. 
 
 Limiter is designed to handle concurrent invocations but there are no doubt bugs hiding that would
 surface in a highly concurrent execution environment.
 
 The design goals have been to keep the latency as low as possible for the non-rate limited requests
-and to in theory allow for massive amounts of very bursty traffic without requiring an excessive amount
-of blocked threads for the purposes of implementing the delays.
+and to in theory allow for massive amounts of very bursty traffic without requiring an excessive 
+amount of blocked threads for the purposes of implementing the delays.
 
 I opted to use java after having thought of the problem for a bit because it provides facilities
 such as scheduled execution and highly efficient concurrent data structures such as `ConcurrentHashMap`
 and `ConcurrentLinkedDeque`. In hindsight, it probably wasn't the best choice for a time constrained 
 implementation effort since figuring out how to use the API for the http client and server took 
-considerable time, and I would probably have arrived at the stage where I prototype a lot earlier working
-with a language such as python.
+considerable time, and I would probably have arrived at the stage where I prototype a lot earlier 
+working with a language such as python.
 
 If this code were to be put in production, this is a list of things I would prioritise:
 
@@ -48,6 +51,14 @@ If this code were to be put in production, this is a list of things I would prio
   would run out of memory and die if enough requests to a single path was sent. A better failure
   mode would probably be to reject requests above a certain threshold
 * It would not handle the failure mode where a sustained request of incoming requests for a 
-  specific path is higher than the limiting rate. A sensible implemenatiton woudl be to have
+  specific path is higher than the limiting rate. A sensible implementation would be to have
   configurable deadline of say 10 seconds or so for the backend and fast fail requests when 
   the associated queue length would be too long to be able to send the request before the deadline.
+* Thinking through the algorithm, I realise that there is a race condition where a request would 
+  be added to the Queue between the empty check and the call to `remove()` in `scheduleRemoveQueue()`
+  that would cause a request to be dropped. It could be fixed with some heavy-handed locking,
+  but I believe that the neat fix would be to put all the modifications of `states` and its 
+  associated queues to a blocking queue and have a single thread make those modifications, as 
+  the cases where we are imposing a delay anyway. This way the fast path that simply attempts
+  to `putIfAbsent()` would be concurrent and the slow path that queues request for delayed execution
+  would be done asynchronously when latency doesn't matter.

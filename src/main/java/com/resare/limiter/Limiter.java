@@ -90,6 +90,10 @@ public class Limiter<Req, Resp, Key> implements Service<Req, Resp> {
                 scheduleRemoveQueue(key, innerDelay);
             } else {
                 LOG.info("removing queue for key {}", key);
+                if (!states.get(key).getQueue().isEmpty()) {
+                    LOG.info("Queue is not empty, not removing");
+                    return;
+                }
                 states.remove(key);
             }
         }, delay, TimeUnit.MILLISECONDS);
