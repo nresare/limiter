@@ -14,9 +14,10 @@ public class WebServer {
     public static final Duration MINIMAL_GAP = Duration.ofMillis(200);
     public static final String TARGET_BASE = "http://localhost:8081";
 
+
     public static void main(String[] args) throws Exception {
         var upstream = new UpstreamService();
-        var limiter = new Limiter<>(r -> r.uri().getPath(), upstream, MINIMAL_GAP);
+        var limiter = new Limiter<>(r -> r.uri().getPath(), upstream, MINIMAL_GAP, false);
         startAndServe(limiter);
     }
 

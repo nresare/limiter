@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
+import java.util.Queue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -18,20 +19,27 @@ public class Limiter<Req, Resp, Key> implements Service<Req, Resp> {
     private final Function<Req, Key> keyMaker;
     private final Service<Req, Resp> backingService;
     private volatile Duration minimalGap;
+    private boolean reuseResponse;
     // Haven't looked into what is a good value for corePoolSize, just guessing for now.
     private final ScheduledExecutorService executorService = new ScheduledThreadPoolExecutor(4);
-    private final ConcurrentMap<Key, LimiterState> states = new ConcurrentHashMap<>();
+    private final ConcurrentMap<Key, LimiterState<Req, Resp>> states = new ConcurrentHashMap<>();
 
-    public Limiter(Function<Req, Key> keyMaker, Service<Req, Resp> backingService, Duration minimalGap) {
+    public Limiter(
+            Function<Req, Key> keyMaker,
+            Service<Req, Resp> backingService,
+            Duration minimalGap,
+            boolean reuseResponse
+    ) {
         this.keyMaker = keyMaker;
         this.backingService = backingService;
         this.minimalGap = minimalGap;
+        this.reuseResponse = reuseResponse;
     }
 
     public CompletableFuture<Resp> request(Req request) {
         var key = keyMaker.apply(request);
 
-        var prevState = states.putIfAbsent(key, new LimiterState());
+        var prevState = states.putIfAbsent(key, new LimiterState<>());
         if (prevState == null) {
             LOG.info("Handling fast path request for {}", key);
             return backingService.request(request);
@@ -43,7 +51,8 @@ public class Limiter<Req, Resp, Key> implements Service<Req, Resp> {
         this.minimalGap = minimalGap;
     }
 
-    private CompletableFuture<Resp> slowPath(LimiterState limiterState, Req request, Key key) {
+
+    private CompletableFuture<Resp> slowPath(LimiterState<Req, Resp> limiterState, Req request, Key key) {
         LOG.info("Handling slow path request for {}", key);
         var delay = msDelay(limiterState);
         if (delay < 0) {
@@ -54,7 +63,7 @@ public class Limiter<Req, Resp, Key> implements Service<Req, Resp> {
 
         var future = new CompletableFuture<Resp>();
         var queue = limiterState.getQueue();
-        queue.add(() -> completeOther(backingService.request(request), future));
+        queue.add(new QueueItem<>(request, future));
         if (queue.size() < 2) {
             scheduleProcessQueue(key);
         }
@@ -69,10 +78,17 @@ public class Limiter<Req, Resp, Key> implements Service<Req, Resp> {
         executorService.schedule(() -> {
             LOG.info("Processing queue");
             var queue = state.getQueue();
-            var runnable = queue.poll();
-            if (runnable != null) {
+            var item = queue.poll();
+            if (item != null) {
                 state.updateLastSent();
-                runnable.run();
+
+                var future = completeOther(
+                        backingService.request(item.request()),
+                        item.toComplete()
+                );
+                if (reuseResponse) {
+                    future.thenAccept(response -> emptyQueue(queue, response));
+                }
             }
             if (!queue.isEmpty()) {
                 scheduleProcessQueue(key);
@@ -82,6 +98,15 @@ public class Limiter<Req, Resp, Key> implements Service<Req, Resp> {
 
         }, delay, TimeUnit.MILLISECONDS);
     }
+
+    private void emptyQueue(Queue<QueueItem<Req, Resp>> queue, Resp response) {
+        while (!queue.isEmpty()) {
+            var item = queue.poll();
+            item.toComplete().complete(response);
+        }
+    }
+
+
 
     private void scheduleRemoveQueue(Key key, long delay) {
         executorService.schedule(() -> {
@@ -100,12 +125,12 @@ public class Limiter<Req, Resp, Key> implements Service<Req, Resp> {
     }
 
 
-    private long msDelay(LimiterState limiterState) {
+    private long msDelay(LimiterState<Req, Resp> limiterState) {
         return limiterState.getLastSent() + minimalGap.toMillis() - System.currentTimeMillis();
     }
 
-    private <T>void completeOther(CompletableFuture<T> future, CompletableFuture<T> other) {
-        future.thenAccept(other::complete)
+    private <T>CompletableFuture<T> completeOther(CompletableFuture<T> future, CompletableFuture<T> other) {
+        return future.thenApply(result -> { other.complete(result); return result; } )
                 .exceptionally(ex -> {
                     other.completeExceptionally(ex);
                     return null;

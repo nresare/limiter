@@ -15,7 +15,7 @@ class LimiterTest {
     @Test
     void testRequest_delayForSameRequest() {
         Service<String, String> backingService = req -> CompletableFuture.completedFuture("from_service");
-        var limiter = new Limiter<>(Function.identity(), backingService, Duration.ofMillis(DELAY));
+        var limiter = new Limiter<>(Function.identity(), backingService, Duration.ofMillis(DELAY), false);
         long[] firstAndLast =  new long[2];
         // keep track of the return time of the first request
         limiter.request("in").thenAccept(r -> firstAndLast[0] = System.currentTimeMillis());
@@ -29,9 +29,25 @@ class LimiterTest {
     }
 
     @Test
+    void testRequest_delayForSameRequest_reuseReponse() {
+        Service<String, String> backingService = req -> CompletableFuture.completedFuture("from_service");
+        var limiter = new Limiter<>(Function.identity(), backingService, Duration.ofMillis(DELAY), true);
+        long[] firstAndLast =  new long[2];
+        // keep track of the return time of the first request
+        limiter.request("in").thenAccept(r -> firstAndLast[0] = System.currentTimeMillis());
+        for (int i = 0 ; i < 5 ; i++) {
+            // fire and forget
+            limiter.request("in");
+        }
+        // keep track of the last request
+        limiter.request("in").thenAccept(r -> firstAndLast[1] = System.currentTimeMillis()).join();
+        assertTrue( firstAndLast[1] - firstAndLast[0] > DELAY);
+    }
+
+    @Test
     void testRequest_noDelayForDifferentRequests() {
         Service<String, String> backingService = req -> CompletableFuture.completedFuture("from_service");
-        var limiter = new Limiter<>(Function.identity(), backingService, Duration.ofMillis(DELAY));
+        var limiter = new Limiter<>(Function.identity(), backingService, Duration.ofMillis(DELAY), false);
         long[] firstAndLast =  new long[2];
         // keep track of the return time of the first request
         limiter.request("in first").thenAccept(r -> firstAndLast[0] = System.currentTimeMillis());

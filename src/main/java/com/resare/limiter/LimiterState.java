@@ -1,11 +1,14 @@
 package com.resare.limiter;
 
 import java.util.Queue;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedDeque;
 
-public class LimiterState {
+record QueueItem<Req, Resp>(Req request, CompletableFuture<Resp> toComplete) {}
+
+public class LimiterState<Req, Resp> {
     private long lastSent;
-    private final Queue<Runnable> queue;
+    private final Queue<QueueItem<Req, Resp>> queue;
 
     public LimiterState() {
         this.lastSent = System.currentTimeMillis();
@@ -16,7 +19,7 @@ public class LimiterState {
         return lastSent;
     }
 
-    public Queue<Runnable> getQueue() {
+    public Queue<QueueItem<Req, Resp>> getQueue() {
         return queue;
     }
 
